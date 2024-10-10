@@ -22,15 +22,14 @@ include_directories(${HYPRE_DIR}/hypre/include)
 # Add the HYPRE library directory
 link_directories(${HYPRE_DIR}/build)
 
-# set_source_files_properties(poisson.c PROPERTIES LANGUAGE CXX)
 
 # Create an executable target
-add_executable(hello_hypre hello.c)
-add_executable(poisson poisson.c)
-add_executable(diffusion diffusion.c)
+add_executable(hello_hypre src/hello.c)
+add_executable(poisson src/poisson.c)
+add_executable(diffusion src/diffusion.c)
 
-set_source_files_properties(poisson.c PROPERTIES LANGUAGE CXX)
-set_source_files_properties(diffusion.c PROPERTIES LANGUAGE CXX)
+set_source_files_properties(src/poisson.c PROPERTIES LANGUAGE CXX)
+set_source_files_properties(src/diffusion.c PROPERTIES LANGUAGE CXX)
 
 # Link standard C++ library
 target_link_libraries(poisson stdc++)
