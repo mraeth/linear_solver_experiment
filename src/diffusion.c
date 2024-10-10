@@ -42,14 +42,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <iostream>
+#include <cstdlib> // for std::atoi
 // #include "HYPRE_krylov.h"
 #include "HYPRE_struct_ls.h"
 
 #define PI 3.14159265358979
 
 /* Macro to evaluate a function F in the grid point (i,j) */
-#define Eval(F,i,j) (F( (ilower[0]+(i))*h, (ilower[1]+(j))*h ))
-#define bcEval(F,i,j) (F( (bc_ilower[0]+(i))*h, (bc_ilower[1]+(j))*h ))
+#define Eval(F,i,j) (F( (ilower[0]+(i))*h, (ilower[1]+(j))*h )*n*n)
+#define bcEval(F,i,j) (F( (bc_ilower[0]+(i))*h, (bc_ilower[1]+(j))*h )*n*n)
 
 void write_array(HYPRE_StructVector x, int ilower, int iupper, const char * file_name){
     int myid;
@@ -89,7 +91,7 @@ void write_array(HYPRE_StructVector x, int ilower, int iupper, const char * file
 /* Diffusion coefficient */
 double K(double x, double y)
 {
-    return  exp(20*x*x)*abs(sin(2*PI*y)); //x * x + exp(y);
+    return  0.1+exp(3*x*x)*abs(sin(2*PI*y)*sin(2*PI*x)); //x * x + exp(y);
 }
 
 /* Boundary condition */
@@ -114,13 +116,36 @@ int main (int argc, char *argv[])
    double h, h2;
    int ilower[2], iupper[2];
 
-   int solver_id;
    int n_pre, n_post;
    double mytime = 0.0;
    double walltime = 0.0;
 
    int num_iterations;
    double final_res_norm;
+
+
+    int solver_id = 0;
+
+    // Check if the solver_id is provided as a command-line argument
+    if (argc > 1) {
+        solver_id = std::atoi(argv[1]); // Convert argument to an integer
+
+        // Validate the solver_id
+        if (solver_id != 0 && solver_id != 1) {
+            std::cerr << "Invalid solver_id: " << solver_id 
+                      << ". Allowed values are 0 (SMG) or 1 (GMRES)." << std::endl;
+            return 1;
+        }
+    }
+
+    // Choose solver based on solver_id
+    if (solver_id == 0) {
+        std::cout << "Selected solver: SMG (ID: 0)" << std::endl;
+    } else if (solver_id == 1) {
+        std::cout << "Selected solver: GMRES (/w SMG preconditioner)(ID: 1)" << std::endl;
+    }
+
+
 
    HYPRE_StructGrid     grid;
    HYPRE_StructStencil  stencil;
@@ -129,6 +154,7 @@ int main (int argc, char *argv[])
    HYPRE_StructVector   x;
    HYPRE_StructVector   alpha;
    HYPRE_StructSolver   solver;
+   HYPRE_StructSolver   precond;
 
    /* Initialize MPI */
    MPI_Init(&argc, &argv);
@@ -569,6 +595,9 @@ int main (int argc, char *argv[])
    HYPRE_StructVectorAssemble(x);
 
    /* 6. Set up and use a solver */
+
+
+   if (solver_id)
    {
       /* Start timing */
       mytime -= MPI_Wtime();
@@ -577,7 +606,7 @@ int main (int argc, char *argv[])
       HYPRE_StructSMGCreate(MPI_COMM_WORLD, &solver);
       HYPRE_StructSMGSetMemoryUse(solver, 0);
       HYPRE_StructSMGSetMaxIter(solver, 50);
-      HYPRE_StructSMGSetTol(solver, 1.0e-06);
+      HYPRE_StructSMGSetTol(solver, 1.0e-12);
       HYPRE_StructSMGSetRelChange(solver, 0);
       HYPRE_StructSMGSetNumPreRelax(solver, n_pre);
       HYPRE_StructSMGSetNumPostRelax(solver, n_post);
@@ -599,6 +628,7 @@ int main (int argc, char *argv[])
       /* Solve */
       HYPRE_StructSMGSolve(solver, A, b, x);
 
+
       /* Finalize current timing */
       mytime += MPI_Wtime();
       MPI_Allreduce(&mytime, &walltime, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
@@ -612,13 +642,74 @@ int main (int argc, char *argv[])
       HYPRE_StructSMGGetFinalRelativeResidualNorm(solver, &final_res_norm);
       HYPRE_StructSMGDestroy(solver);
    }
+   else{
+
+      HYPRE_StructGMRESCreate(MPI_COMM_WORLD, &solver);
+
+      /* Note that GMRES can be used with all the interfaces - not
+         just the struct.  So here we demonstrate the
+         more generic GMRES interface functions. Since we have chosen
+         a struct solver then we must type cast to the more generic
+         HYPRE_Solver when setting options with these generic functions.
+         Note that one could declare the solver to be
+         type HYPRE_Solver, and then the casting would not be necessary.*/
+
+      HYPRE_GMRESSetMaxIter((HYPRE_Solver) solver, 500 );
+      HYPRE_GMRESSetKDim((HYPRE_Solver) solver, 30);
+      HYPRE_GMRESSetTol((HYPRE_Solver) solver, 1.0e-012 );
+      HYPRE_GMRESSetPrintLevel((HYPRE_Solver) solver, 0 );
+      HYPRE_GMRESSetLogging((HYPRE_Solver) solver, 0 );
+
+
+         /* use symmetric SMG as preconditioner */
+         HYPRE_StructSMGCreate(MPI_COMM_WORLD, &precond);
+         HYPRE_StructSMGSetMemoryUse(precond, 0);
+         HYPRE_StructSMGSetMaxIter(precond, 1);
+         HYPRE_StructSMGSetTol(precond, 0.0);
+         HYPRE_StructSMGSetZeroGuess(precond);
+         HYPRE_StructSMGSetNumPreRelax(precond, n_pre);
+         HYPRE_StructSMGSetNumPostRelax(precond, n_post);
+         HYPRE_StructSMGSetPrintLevel(precond, 0);
+         HYPRE_StructSMGSetLogging(precond, 0);
+         HYPRE_StructGMRESSetPrecond(solver,
+                                     HYPRE_StructSMGSolve,
+                                     HYPRE_StructSMGSetup,
+                                     precond);
+
+
+
+
+      HYPRE_StructGMRESSetup(solver, A, b, x );
+
+      mytime += MPI_Wtime();
+      MPI_Allreduce(&mytime, &walltime, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+      if (myid == 0)
+      {
+         printf("\nGMRES Setup time = %f seconds\n\n", walltime);
+      }
+
+      mytime -= MPI_Wtime();
+
+      /* GMRES Solve */
+      HYPRE_StructGMRESSolve(solver, A, b, x);
+
+      mytime += MPI_Wtime();
+      MPI_Allreduce(&mytime, &walltime, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+      if (myid == 0)
+      {
+         printf("\nGMRES Solve time = %f seconds\n\n", walltime);
+      }
+
+      /* Get info and release memory */
+      HYPRE_StructGMRESGetNumIterations(solver, &num_iterations);
+      HYPRE_StructGMRESGetFinalRelativeResidualNorm(solver, &final_res_norm);
+      HYPRE_StructGMRESDestroy(solver);
+      HYPRE_StructSMGDestroy(precond);
+   }
 
     write_array(x, ilower[0], iupper[0], "result.dat");
     write_array(b, ilower[0], iupper[0], "b.dat");
     write_array(alpha, ilower[0], iupper[0], "alpha.dat");
-
-
-   
 
    if (myid == 0)
    {

@@ -16,6 +16,10 @@ include_directories(${MPI_INCLUDE_PATH})
 # Set the path to your HYPRE build (adjust this to match your setup)
 set(HYPRE_DIR "../hypre/src")
 
+set(CMAKE_CXX_FLAGS "-Wall -Wextra")
+set(CMAKE_CXX_FLAGS_DEBUG "-g")
+set(CMAKE_CXX_FLAGS_RELEASE "-O3")
+
 # Add include directories for HYPRE
 include_directories(${HYPRE_DIR}/hypre/include)
 
